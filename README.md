@@ -24,16 +24,13 @@ explanation is generated on the fly via an LLM API call.
 
 ## Architecture
 adaptive_quiz/
-
 ├── requirements.txt
 ├── backend/
-│   ├── api_layer.py        # all LLM calls live here — the only 3 call types:
-│   │                       #   generate_question / evaluate_answer / generate_explanation
-│   ├── quiz_controller.py  # subject-agnostic: session state, adaptive difficulty,
-│   │                       # rule-based level decision (no ML model)
+│   ├── api_layer.py        # the only 3 API call types: generate_question, evaluate_answer, generate_explanation
+│   ├── quiz_controller.py  # session state, adaptive difficulty, rule-based level decision (subject-agnostic)
 │   └── app.py               # Flask routes: /start_quiz, /submit_answer
 └── frontend/
-└── streamlit_app.py     # thin UI — calls the Flask API only, no quiz logic
+    └── streamlit_app.py     # thin UI, calls the Flask API only
 
 Subject is just a string parameter passed through every layer. None of the
 quiz/level logic is subject-specific, so adding a new subject (or a
