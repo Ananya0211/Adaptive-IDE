@@ -6,8 +6,8 @@ places a student into one of two proficiency levels — **Level 1
 generated quiz. This is iteration 1 of a larger adaptive IDE project: it
 only covers the entry-point assessment, not the IDE itself.
 
-No question bank, no static content file. Every question, evaluation, and
-explanation is generated on the fly via an LLM API call.
+ No question bank, no static content file. Every question, evaluation, and
+ explanation is generated on the fly via an LLM API call.
 
 ## How it works
 
@@ -18,19 +18,27 @@ explanation is generated on the fly via an LLM API call.
    - Correct → next question is **harder**.
    - Incorrect → API generates an **explanation**, shown to the user, then
      the next question is **same-or-easier**.
-5. This repeats for a fixed number of questions (currently 6).
+5. This repeats for a fixed number of questions (currently 6 total: 4 MCQ and 2 coding questions).
 6. At the end, a simple rule-based scoring function (weighted by difficulty
    of correctly-answered questions) assigns a final level, shown to the user.
 
 ## Architecture
+
+```text
 adaptive_quiz/
 ├── requirements.txt
 ├── backend/
-│   ├── api_layer.py        # the only 3 API call types: generate_question, evaluate_answer, generate_explanation
-│   ├── quiz_controller.py  # session state, adaptive difficulty, rule-based level decision (subject-agnostic)
-│   └── app.py               # Flask routes: /start_quiz, /submit_answer
+│   ├── api_layer.py       # the three API call types: generate_question, evaluate_answer, generate_explanation
+│   ├── quiz_controller.py # session state, adaptive difficulty, rule-based level decision
+│   └── app.py            # Flask routes: /start_quiz, /submit_answer
 └── frontend/
-    └── streamlit_app.py     # thin UI, calls the Flask API only
+    └── streamlit_app.py  # thin UI, calls the Flask API only
+```
+
+- `backend/api_layer.py` owns all Groq calls and prompt logic.
+- `backend/quiz_controller.py` owns session state, question ordering, and difficulty changes.
+- `backend/app.py` exposes the HTTP endpoints used by the frontend.
+- `frontend/streamlit_app.py` is just the UI layer.
 
 Subject is just a string parameter passed through every layer. None of the
 quiz/level logic is subject-specific, so adding a new subject (or a
@@ -43,8 +51,8 @@ Sessions are kept in memory on the backend (a Python dict, keyed by a UUID)
 ## Prerequisites
 
 - Python 3.10+
-- A Gemini API key (free tier, no credit card required) from
-  [aistudio.google.com](https://aistudio.google.com) → "Get API key"
+- A Groq API key from [console.groq.com](https://console.groq.com) →
+  "API Keys"
 
 > The API layer can also be swapped to use other API instead — only
 > `backend/api_layer.py` would need to change; the function signatures
@@ -62,17 +70,20 @@ Set your API key for the current terminal session:
 
 **PowerShell (Windows)**
 ```powershell
-$env:GEMINI_API_KEY="your-key-here"
+$env:GROQ_API_KEY="your-key-here"
 ```
 
 **macOS / Linux**
 ```bash
-export GEMINI_API_KEY="your-key-here"
+export GROQ_API_KEY="your-key-here"
 ```
 
 This only persists for the terminal session it's set in — set it again if
 you close the window, and set it in whichever terminal will run the backend
 (the frontend doesn't need it).
+
+Optional: if you want to choose a specific Groq model, set `GROQ_MODEL` too.
+If you leave it unset, the backend uses `llama-3.3-70b-versatile`.
 
 ## Running
 
@@ -110,7 +121,7 @@ Level decision threshold (`final_score >= 3` → Level 2) is in
 
 - **`invalid x-api-key` / 401 errors**: the API key isn't being read
   correctly, or wasn't set in the same terminal you ran `python app.py`
-  from. Run `echo $env:GEMINI_API_KEY` (PowerShell) to confirm it's set.
+  from. Run `echo $env:GROQ_API_KEY` (PowerShell) to confirm it's set.
 - **`JSONDecodeError` on the Streamlit side**: usually a symptom of the
   backend returning an HTML error page instead of JSON (e.g. an unhandled
   exception). Check the backend terminal for the actual traceback — that's

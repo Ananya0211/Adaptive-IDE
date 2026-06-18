@@ -1,6 +1,5 @@
 """
-API integration layer -- now backed by Google's Gemini API (free tier),
-instead of Anthropic's API.
+API integration layer -- now backed by Groq's OpenAI-compatible API.
 
 Exactly three call types, as required by the spec:
   - generate_question(subject, difficulty, history)
@@ -10,7 +9,7 @@ Exactly three call types, as required by the spec:
 Subject is just a string parameter ("Python", "C", ...). Nothing about any
 particular subject is hardcoded here.
 
-Requires: GEMINI_API_KEY environment variable.
+Requires: GROQ_API_KEY environment variable.
 """
 
 import json
@@ -19,7 +18,7 @@ from pathlib import Path
 
 import requests
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 
 def _load_dotenv_value(key_name):
@@ -43,54 +42,93 @@ def _load_dotenv_value(key_name):
 
 
 def _get_api_key():
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        api_key = _load_dotenv_value("GEMINI_API_KEY") or _load_dotenv_value("GOOGLE_API_KEY")
+        api_key = _load_dotenv_value("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "Missing Gemini API key. Set GEMINI_API_KEY in your environment or add it to a repo-root .env file."
+            "Missing Groq API key. Set GROQ_API_KEY in your environment or add it to a repo-root .env file."
         )
     return api_key
 
 
 def _get_model():
-    model = os.environ.get("GEMINI_MODEL") or _load_dotenv_value("GEMINI_MODEL")
+    model = os.environ.get("GROQ_MODEL") or _load_dotenv_value("GROQ_MODEL")
     return model or DEFAULT_MODEL
+
+
+def _build_avoid_text(avoid_questions):
+    if not avoid_questions:
+        return ""
+    serialized = json.dumps(avoid_questions, ensure_ascii=False)
+    return (
+        "Do not repeat any question that matches one of these exact question texts: "
+        f"{serialized}. "
+    )
 
 
 def _call(system_prompt, user_prompt):
     api_key = _get_api_key()
     model = _get_model()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    url = "https://api.groq.com/openai/v1/chat/completions"
     body = {
-        "system_instruction": {"parts": [{"text": system_prompt}]},
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "generationConfig": {"response_mime_type": "application/json"},
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
     }
-    resp = requests.post(url, json=body, timeout=30)
+    resp = requests.post(url, json=body, headers={"Authorization": f"Bearer {api_key}"}, timeout=30)
     if not resp.ok:
-        raise RuntimeError(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
+        if resp.status_code == 401:
+            raise RuntimeError(
+                "Groq API key was rejected (401). Make sure GROQ_API_KEY is a Groq key from console.groq.com, not a Google/AI Studio key."
+            )
+        raise RuntimeError(f"Groq API error {resp.status_code}: {resp.text[:300]}")
 
     data = resp.json()
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    text = data["choices"][0]["message"]["content"]
     return json.loads(text)
 
 
-def generate_question(subject, difficulty, history):
+def generate_question(subject, difficulty, history, question_type=None, question_stage=None, avoid_questions=None):
     history_summary = "\n".join(
         f"- (difficulty {h['difficulty']}, topic: {h.get('topic', 'n/a')}): "
         f"{'answered correctly' if h['correct'] else 'answered incorrectly'}"
         for h in history
     ) or "No questions asked yet."
 
+    type_instruction = (
+        f"Generate exactly ONE {question_type} question. "
+        if question_type in ("mcq", "code")
+        else "Generate exactly ONE question. "
+    )
+
+    stage_instruction = ""
+    if question_type == "code" and question_stage == "first":
+        stage_instruction = (
+            "This is the first coding question: keep it simple, answerable in a few lines, and avoid long boilerplate. "
+        )
+    elif question_type == "code" and question_stage == "second":
+        stage_instruction = (
+            "This is the second coding question: keep it short, but make it noticeably harder than the first coding question. "
+        )
+
+    avoid_instruction = _build_avoid_text(avoid_questions)
+
     system_prompt = (
         "You are a question generator for a programming proficiency assessment tool. "
-        "Generate exactly ONE question for the given subject and difficulty. "
+        f"{type_instruction}"
+        f"{stage_instruction}"
+        f"{avoid_instruction}"
         "Difficulty is 1-5: 1 = absolute beginner (syntax, variables, print), "
         "3 = working knowledge (loops, functions, basic data structures), "
         "5 = advanced applied knowledge (pointers/memory in C, decorators/generators "
         "in Python, debugging non-obvious bugs, algorithmic reasoning). "
-        "Pick whichever of 'mcq' or 'code' best tests that difficulty level, and avoid "
+        "If a question type was provided, you must use that exact type and avoid "
+        "changing it. Otherwise pick whichever of 'mcq' or 'code' best tests that difficulty level, and avoid "
         "topics already covered in the history given to you. "
         "Respond with ONLY a single JSON object in this exact shape:\n"
         '{"type": "mcq" or "code", "question": "...", '
@@ -103,7 +141,24 @@ def generate_question(subject, difficulty, history):
         f"History so far:\n{history_summary}\n\n"
         "Generate the next question now."
     )
-    return _call(system_prompt, user_prompt)
+
+    avoid_set = set(avoid_questions or [])
+    last_error = None
+    for attempt in range(3):
+        question = _call(system_prompt, user_prompt)
+        question_text = (question or {}).get("question")
+        if question_text and question_text not in avoid_set:
+            return question
+        avoid_set.add(question_text)
+        last_error = question_text
+        system_prompt = (
+            system_prompt
+            + " The previous attempt repeated an already-used question, so generate a different one now."
+        )
+
+    raise RuntimeError(
+        f"Groq kept returning a repeated question: {last_error or 'unknown question'}"
+    )
 
 
 def evaluate_answer(subject, question, user_answer):

@@ -1,4 +1,7 @@
+import html
+
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 
 API_BASE = "http://localhost:5000"
@@ -9,8 +12,71 @@ def safe_json(resp):
     except ValueError:
         return {"error": f"Backend returned a non-JSON response (status {resp.status_code}): {resp.text[:200]}"}
 
-st.set_page_config(page_title="Adaptive Proficiency Quiz", layout="centered")
+st.set_page_config(page_title="Adaptive Proficiency Quiz", layout="wide")
 st.title("Adaptive Programming Proficiency Quiz")
+
+st.markdown(
+    """
+    <style>
+    .block-container {
+        max-width: 1100px;
+        padding-top: 1.5rem;
+    }
+
+    .question-card {
+        user-select: none;
+        -webkit-user-select: none;
+        -ms-user-select: none;
+        line-height: 1.7;
+        font-size: 1.05rem;
+        margin-bottom: 0.5rem;
+    }
+
+    textarea {
+        min-height: 320px !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+components.html(
+        """
+        <script>
+        (function () {
+            function applyGuards() {
+                try {
+                    const parentDoc = window.parent.document;
+                    parentDoc.querySelectorAll('.question-card').forEach((el) => {
+                        el.style.userSelect = 'none';
+                        el.style.webkitUserSelect = 'none';
+                        el.oncopy = () => false;
+                        el.oncut = () => false;
+                        el.oncontextmenu = () => false;
+                    });
+
+                    parentDoc.querySelectorAll('textarea').forEach((el) => {
+                        if (el.dataset.guardBound === '1') {
+                            return;
+                        }
+                        el.dataset.guardBound = '1';
+                        el.addEventListener('paste', (event) => event.preventDefault());
+                        el.addEventListener('copy', (event) => event.preventDefault());
+                        el.addEventListener('cut', (event) => event.preventDefault());
+                        el.addEventListener('contextmenu', (event) => event.preventDefault());
+                    });
+                } catch (error) {
+                    // Best effort only: if the browser blocks parent access, the app still works.
+                }
+            }
+
+            applyGuards();
+            setInterval(applyGuards, 1000);
+        })();
+        </script>
+        """,
+        height=0,
+)
 
 defaults = {
     "session_id": None,
@@ -65,7 +131,7 @@ elif st.session_state.question and not st.session_state.finished:
     st.subheader(f"Question {st.session_state.question_number}")
     if q.get("topic"):
         st.caption(f"Topic: {q['topic']}")
-    st.write(q["question"])
+    st.markdown(f'<div class="question-card">{html.escape(q["question"] or "")}</div>', unsafe_allow_html=True)
 
     if q["type"] == "mcq" and q.get("options"):
         user_answer = st.radio(
@@ -73,7 +139,9 @@ elif st.session_state.question and not st.session_state.finished:
         )
     else:
         user_answer = st.text_area(
-            "Your answer / code", key=f"code_{st.session_state.question_number}"
+            "Your answer / code",
+            key=f"code_{st.session_state.question_number}",
+            height=320,
         )
 
     if st.button("Submit Answer"):

@@ -16,6 +16,14 @@ MAX_QUESTIONS = 6
 START_DIFFICULTY = 3
 MIN_DIFFICULTY = 1
 MAX_DIFFICULTY = 5
+QUESTION_SEQUENCE = [
+    {"type": "mcq"},
+    {"type": "mcq"},
+    {"type": "mcq"},
+    {"type": "mcq"},
+    {"type": "code", "stage": "first"},
+    {"type": "code", "stage": "second"},
+]
 
 # session_id -> session state dict
 _sessions = {}
@@ -23,7 +31,15 @@ _sessions = {}
 
 def start_quiz(subject):
     session_id = str(uuid.uuid4())
-    question = generate_question(subject, START_DIFFICULTY, [])
+    question_spec = QUESTION_SEQUENCE[0]
+    question = generate_question(
+        subject,
+        START_DIFFICULTY,
+        [],
+        question_type=question_spec["type"],
+        question_stage=question_spec.get("stage"),
+        avoid_questions=[],
+    )
     _sessions[session_id] = {
         "subject": subject,
         "difficulty": START_DIFFICULTY,
@@ -71,7 +87,7 @@ def submit_answer(session_id, user_answer):
         "topic": question.get("topic"),
     })
 
-    # Adaptive difficulty rule: correct -> harder, incorrect -> same-or-easier.
+    # Adaptive difficulty rule: correct -> harder, incorrect -> easier.
     next_difficulty = (
         min(MAX_DIFFICULTY, difficulty + 1) if is_correct
         else max(MIN_DIFFICULTY, difficulty - 1)
@@ -91,7 +107,15 @@ def submit_answer(session_id, user_answer):
         result["history"] = session["history"]
         return result
 
-    next_question = generate_question(subject, next_difficulty, session["history"])
+    next_question_spec = QUESTION_SEQUENCE[session["question_count"]]
+    next_question = generate_question(
+        subject,
+        next_difficulty,
+        session["history"],
+        question_type=next_question_spec["type"],
+        question_stage=next_question_spec.get("stage"),
+        avoid_questions=[item["question"] for item in session["history"] if item.get("question")],
+    )
     session["difficulty"] = next_difficulty
     session["current_question"] = next_question
     session["question_count"] += 1
