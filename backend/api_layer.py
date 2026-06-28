@@ -93,7 +93,15 @@ def _call(system_prompt, user_prompt):
     return json.loads(text)
 
 
-def generate_question(subject, difficulty, history, question_type=None, question_stage=None, avoid_questions=None):
+def generate_question(
+    subject,
+    difficulty,
+    history,
+    question_type=None,
+    question_stage=None,
+    avoid_questions=None,
+    fixed_topic=None,
+):
     history_summary = "\n".join(
         f"- (difficulty {h['difficulty']}, topic: {h.get('topic', 'n/a')}): "
         f"{'answered correctly' if h['correct'] else 'answered incorrectly'}"
@@ -109,20 +117,29 @@ def generate_question(subject, difficulty, history, question_type=None, question
     stage_instruction = ""
     if question_type == "code" and question_stage == "first":
         stage_instruction = (
-            "This is the first coding question: keep it simple, answerable in a few lines, and avoid long boilerplate. "
+            "This is the first coding question: make it easy, beginner-friendly, answerable in a few lines, "
+            "and avoid long boilerplate or tricky edge cases. "
         )
     elif question_type == "code" and question_stage == "second":
         stage_instruction = (
-            "This is the second coding question: keep it short, but make it noticeably harder than the first coding question. "
+            "This is the second coding question: keep it easy-to-moderate, short, and practical. "
+            "It may be slightly harder than the first coding question, but should still be beginner-friendly. "
         )
 
     avoid_instruction = _build_avoid_text(avoid_questions)
+    fixed_topic_instruction = ""
+    if fixed_topic:
+        fixed_topic_instruction = (
+            f"All questions in this quiz must stay within this broad topic: {fixed_topic}. "
+            "Do not switch to unrelated topics. Keep the topic label broad and readable. "
+        )
 
     system_prompt = (
         "You are a question generator for a programming proficiency assessment tool. "
         f"{type_instruction}"
         f"{stage_instruction}"
         f"{avoid_instruction}"
+        f"{fixed_topic_instruction}"
         "Difficulty is 1-5: 1 = absolute beginner (syntax, variables, print), "
         "3 = working knowledge (loops, functions, basic data structures), "
         "5 = advanced applied knowledge (pointers/memory in C, decorators/generators "
@@ -130,6 +147,11 @@ def generate_question(subject, difficulty, history, question_type=None, question
         "If a question type was provided, you must use that exact type and avoid "
         "changing it. Otherwise pick whichever of 'mcq' or 'code' best tests that difficulty level, and avoid "
         "topics already covered in the history given to you. "
+        "For code questions, prefer small tasks such as printing, conditionals, loops, simple functions, "
+        "or basic list/array/string processing. The question must clearly say: "
+        "'Write only the function. Do not include headers, imports, main function, or extra boilerplate.' "
+        "The correct_answer for code questions must also be only the function body/signature needed, "
+        "without headers, imports, main, or surrounding explanation. "
         "Respond with ONLY a single JSON object in this exact shape:\n"
         '{"type": "mcq" or "code", "question": "...", '
         '"options": ["...", "...", "...", "..."] (omit/empty for type=code), '
@@ -138,6 +160,7 @@ def generate_question(subject, difficulty, history, question_type=None, question
     user_prompt = (
         f"Subject: {subject}\n"
         f"Target difficulty: {difficulty} (1=easiest, 5=hardest)\n"
+        f"Fixed broad topic (if provided): {fixed_topic or 'None'}\n"
         f"History so far:\n{history_summary}\n\n"
         "Generate the next question now."
     )
@@ -165,7 +188,13 @@ def evaluate_answer(subject, question, user_answer):
     system_prompt = (
         "You are an answer evaluator for a programming proficiency assessment. "
         "Judge correctness. For MCQ, match on meaning, not exact casing/wording. "
-        "For code questions, judge logic/output, not formatting. "
+        "For code questions, grade by whether the student's code fulfills the task asked in the question. "
+        "Accept any correct approach even if it does not match the provided expected answer exactly, "
+        "uses different variable names, has a different structure, prints equivalent output, returns a value "
+        "instead of printing when that still clearly satisfies the task, or handles the work in another valid way. "
+        "Mark code incorrect only when it would not perform the requested work, has a meaningful logic error, "
+        "or omits an essential requirement. Do not require identical wording or formatting of output unless "
+        "the question explicitly asks for exact output text. "
         "Respond with ONLY a single JSON object in this exact shape:\n"
         '{"correct": true or false, "reasoning": "one short sentence"}'
     )
@@ -183,9 +212,12 @@ def evaluate_answer(subject, question, user_answer):
 
 def generate_explanation(subject, question, user_answer):
     system_prompt = (
-        "You are a patient programming tutor. The student answered a question "
-        "incorrectly. In 3-5 short sentences, explain why their answer was wrong and "
-        "what the correct reasoning/answer is. Be concise, concrete, and encouraging. "
+        "You are a patient programming tutor. The student answered incorrectly. "
+        "Give a clear explanation in 4-6 short sentences. First state the exact mistake, "
+        "then explain why it causes the answer/code to fail, then say what change fixes it. "
+        "For code answers, refer to the student's actual code and the expected behavior. "
+        "Avoid vague feedback like 'check your logic'; be specific and practical. "
+        "End with the correct idea or answer in simple words. "
         "Respond with ONLY a single JSON object in this exact shape:\n"
         '{"explanation": "..."}'
     )
@@ -196,5 +228,23 @@ def generate_explanation(subject, question, user_answer):
         f"Correct answer / expected behavior: {question.get('correct_answer')}\n"
         f"Student's (incorrect) answer: {user_answer}\n\n"
         "Explain now."
+    )
+    return _call(system_prompt, user_prompt)
+
+
+def generate_clue(subject, question):
+    system_prompt = (
+        "You are a programming mentor giving clues without revealing the final answer. "
+        "Give one concise clue in 1-2 sentences that helps the student progress. "
+        "Do not provide the direct final answer or full code. "
+        "Respond with ONLY a single JSON object in this exact shape:\n"
+        '{"clue": "..."}'
+    )
+    user_prompt = (
+        f"Subject: {subject}\n"
+        f"Question type: {question.get('type')}\n"
+        f"Question: {question.get('question')}\n"
+        f"Options (if any): {question.get('options')}\n\n"
+        "Give a helpful clue now."
     )
     return _call(system_prompt, user_prompt)
