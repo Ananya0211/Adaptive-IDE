@@ -1,137 +1,211 @@
-# Adaptive Programming Proficiency Quiz
+# Adaptive IDE
 
-A minimal, working proof-of-concept for an adaptive assessment engine that
-places a student into one of two proficiency levels — **Level 1
-(Foundational)** or **Level 2 (Applied)** — based on a short, dynamically
-generated quiz. This is iteration 1 of a larger adaptive IDE project: it
-only covers the entry-point assessment, not the IDE itself.
+A working proof-of-concept for an adaptive programming assessment engine. It
+places a student into one of two proficiency levels, **Level 1
+(Foundational)** or **Level 2 (Applied)**, using a short quiz generated and
+graded through a Groq-hosted LLM.
 
- No question bank, no static content file. Every question, evaluation, and
- explanation is generated on the fly via an LLM API call.
+This is iteration 1 of a larger adaptive IDE project. It covers the entry
+assessment only, not the IDE itself.
 
-## How it works
+There is no question bank and no static content file. Questions, answer
+evaluation, explanations, and clues are generated on demand through the API.
 
-1. User picks a subject: **Python** or **C**.
-2. The backend asks the API for a question at a medium starting difficulty.
-3. User answers (MCQ or short code snippet).
-4. The backend sends the answer to the API for evaluation.
-   - Correct → next question is **harder**.
-   - Incorrect → API generates an **explanation**, shown to the user, then
-     the next question is **same-or-easier**.
-5. This repeats for a fixed number of questions (currently 6 total: 4 MCQ and 2 coding questions).
-6. At the end, a simple rule-based scoring function (weighted by difficulty
-   of correctly-answered questions) assigns a final level, shown to the user.
+## Features
+
+- Supports **Python** and **C** assessments.
+- Generates 6 questions per session: 4 MCQs followed by 2 coding questions.
+- Adapts difficulty after each answer on a 1-5 scale.
+- Offers two quiz modes:
+  - **Adaptive mixed topics**: questions can move across topics.
+  - **Same broad topic**: all questions stay within a selected topic.
+- Provides a clue on request without revealing the final answer.
+- Shows explanations for incorrect answers.
+- For incorrect coding answers, shows the expected answer and a line-level diff.
+- Computes final proficiency with a simple rule-based score.
+
+## How It Works
+
+1. The user selects a subject: **Python** or **C**.
+2. The user chooses adaptive mixed topics or a fixed broad topic.
+3. The backend asks Groq for a question at the starting difficulty.
+4. The user answers an MCQ or writes a short code snippet.
+5. The backend sends the answer to Groq for evaluation.
+   - Correct answers increase the next question's difficulty.
+   - Incorrect answers decrease the next question's difficulty and trigger an
+     explanation.
+6. After 6 questions, the backend computes a weighted score and returns the
+   final level.
 
 ## Architecture
 
 ```text
 adaptive_quiz/
-├── requirements.txt
-├── backend/
-│   ├── api_layer.py       # the three API call types: generate_question, evaluate_answer, generate_explanation
-│   ├── quiz_controller.py # session state, adaptive difficulty, rule-based level decision
-│   └── app.py            # Flask routes: /start_quiz, /submit_answer
-└── frontend/
-    └── streamlit_app.py  # thin UI, calls the Flask API only
+|-- requirements.txt
+|-- backend/
+|   |-- api_layer.py        # Groq calls, prompts, .env loading
+|   |-- quiz_controller.py  # session state, difficulty, scoring
+|   `-- app.py              # Flask routes
+`-- frontend/
+    `-- streamlit_app.py    # Streamlit UI, calls the Flask API
 ```
 
-- `backend/api_layer.py` owns all Groq calls and prompt logic.
-- `backend/quiz_controller.py` owns session state, question ordering, and difficulty changes.
+- `backend/api_layer.py` owns all Groq API calls and prompt logic.
+- `backend/quiz_controller.py` owns in-memory sessions, question ordering,
+  difficulty changes, clue handling, and final scoring.
 - `backend/app.py` exposes the HTTP endpoints used by the frontend.
-- `frontend/streamlit_app.py` is just the UI layer.
+- `frontend/streamlit_app.py` renders the Streamlit interface.
 
-Subject is just a string parameter passed through every layer. None of the
-quiz/level logic is subject-specific, so adding a new subject (or a
-non-programming one later, e.g. OS/CN) requires no changes outside the
-prompts in `api_layer.py`.
+Subject is passed through each layer as a string. The controller is
+subject-agnostic, so adding another subject mainly requires prompt tuning and
+route/UI validation updates.
 
-Sessions are kept in memory on the backend (a Python dict, keyed by a UUID)
-— no database, no persistent accounts, by design for this iteration.
+Sessions are stored in memory in a Python dictionary keyed by UUID. Restarting
+the backend clears active sessions.
 
 ## Prerequisites
 
 - Python 3.10+
-- A Groq API key from [console.groq.com](https://console.groq.com) →
-  "API Keys"
-
-> The API layer can also be swapped to use other API instead — only
-> `backend/api_layer.py` would need to change; the function signatures
-> (`generate_question`, `evaluate_answer`, `generate_explanation`) and
-> everything else stays the same either way.
+- A Groq API key from [console.groq.com](https://console.groq.com)
 
 ## Setup
 
+From the project root:
+
 ```bash
-cd adaptive_quiz
 pip install -r requirements.txt
 ```
 
-Set your API key for the current terminal session:
+Set your Groq API key in one of these ways.
 
-**PowerShell (Windows)**
+### Option 1: Environment Variable
+
+PowerShell:
+
 ```powershell
 $env:GROQ_API_KEY="your-key-here"
 ```
 
-**macOS / Linux**
+macOS / Linux:
+
 ```bash
 export GROQ_API_KEY="your-key-here"
 ```
 
-This only persists for the terminal session it's set in — set it again if
-you close the window, and set it in whichever terminal will run the backend
-(the frontend doesn't need it).
+This only lasts for the current terminal session. Set it in the terminal that
+runs the backend.
 
-Optional: if you want to choose a specific Groq model, set `GROQ_MODEL` too.
-If you leave it unset, the backend uses `llama-3.3-70b-versatile`.
+### Option 2: `.env` File
+
+Create a `.env` file in either the project root or the `backend/` directory:
+
+```text
+GROQ_API_KEY=your-key-here
+```
+
+Optionally choose a Groq model:
+
+```text
+GROQ_MODEL=llama-3.3-70b-versatile
+```
+
+If `GROQ_MODEL` is not set, the backend uses
+`llama-3.3-70b-versatile`.
 
 ## Running
 
-Two terminals, run from inside `adaptive_quiz/`:
+Open two terminals from the project root.
 
-**Terminal 1 — backend**
+Terminal 1: backend
+
 ```bash
 cd backend
 python app.py
 ```
-Runs on `http://localhost:5000`.
 
-**Terminal 2 — frontend**
+The Flask API runs on `http://localhost:5000`.
+
+Terminal 2: frontend
+
 ```bash
 cd frontend
 streamlit run streamlit_app.py
 ```
-Opens the quiz UI in your browser.
 
-## Configuration knobs
+Streamlit opens the quiz UI in your browser.
+
+## API Endpoints
+
+### `POST /start_quiz`
+
+Starts a new quiz session.
+
+```json
+{
+  "subject": "Python",
+  "topic_mode": "adaptive",
+  "fixed_topic": null
+}
+```
+
+Use `"topic_mode": "same_topic"` with a `fixed_topic` value to keep the whole
+quiz within one broad topic.
+
+### `POST /submit_answer`
+
+Submits the current answer for evaluation.
+
+```json
+{
+  "session_id": "session-uuid",
+  "user_answer": "selected option or code"
+}
+```
+
+### `POST /get_clue`
+
+Requests a clue for the current question.
+
+```json
+{
+  "session_id": "session-uuid"
+}
+```
+
+## Configuration Knobs
 
 In `backend/quiz_controller.py`:
 
-| Constant          | Default | Meaning                              |
-|--------------------|---------|---------------------------------------|
-| `MAX_QUESTIONS`     | 6       | Total questions per quiz session     |
-| `START_DIFFICULTY`  | 3       | Starting difficulty (1–5 scale)      |
-| `MIN_DIFFICULTY`    | 1       | Floor for difficulty adjustment      |
-| `MAX_DIFFICULTY`    | 5       | Ceiling for difficulty adjustment    |
+| Constant | Default | Meaning |
+| --- | ---: | --- |
+| `MAX_QUESTIONS` | 6 | Total questions per quiz session |
+| `START_DIFFICULTY` | 3 | Starting difficulty on the 1-5 scale |
+| `MIN_DIFFICULTY` | 1 | Lowest possible difficulty |
+| `MAX_DIFFICULTY` | 5 | Highest possible difficulty |
+| `QUESTION_SEQUENCE` | 4 MCQ + 2 code | Question type order |
 
-Level decision threshold (`final_score >= 3` → Level 2) is in
-`compute_level()` in the same file.
+The final level threshold is in `compute_level()`. Currently, a final score of
+`3` or higher maps to **Level 2 (Applied)**; lower scores map to **Level 1
+(Foundational)**.
 
 ## Troubleshooting
 
-- **`invalid x-api-key` / 401 errors**: the API key isn't being read
-  correctly, or wasn't set in the same terminal you ran `python app.py`
-  from. Run `echo $env:GROQ_API_KEY` (PowerShell) to confirm it's set.
-- **`JSONDecodeError` on the Streamlit side**: usually a symptom of the
-  backend returning an HTML error page instead of JSON (e.g. an unhandled
-  exception). Check the backend terminal for the actual traceback — that's
-  the real error.
-- **Ctrl+C not stopping the Streamlit terminal**: a known Windows quirk —
-  press Ctrl+C twice, or just close the terminal window.
+- **Missing API key**: set `GROQ_API_KEY` in the backend terminal or add it to
+  a local `.env` file.
+- **401 / rejected key**: make sure the key is a Groq key from
+  `console.groq.com`, not a key from another provider.
+- **Streamlit shows a non-JSON or `JSONDecodeError` message**: the backend
+  likely returned an error page. Check the Flask terminal for the traceback.
+- **The code editor is missing**: confirm `streamlit-ace` installed from
+  `requirements.txt`. The app falls back to a regular text area if it is not
+  available.
+- **Ctrl+C does not stop Streamlit on Windows**: press Ctrl+C twice or close the
+  terminal window.
 
-## Known limitations (intentional, for this iteration)
+## Known Limitations
 
-- Two levels only — no finer granularity.
-- In-memory sessions only — restarting the backend wipes all active quizzes.
-- No persistent user accounts or history across sessions.
-- No automated tests yet.
+- Only two levels are reported.
+- Sessions are in memory only.
+- There are no persistent users, accounts, or quiz history.
+- The app depends on LLM output quality and availability.
+- There are no automated tests yet.
